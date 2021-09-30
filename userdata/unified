@@ -45,7 +45,7 @@ printf "%s" "$DATAS" | while read line
         then
                 GROUPED+="$INDIVIDUALDATA "
                 DATATOSEND=$( printf "%s" " { \"date\" : \"$( date +'%F %H:%M' )\" , \"data\" : [ "$GROUPED" ] } " )
-                curl -s --location --request POST "$MYWEBSITEAPI" \
+                curl -s --insecure --location --request POST "$MYWEBSITEAPI" \
                 --header 'Content-Type: application/json' \
                 --data-raw "$DATATOSEND" > /dev/null 2>&1
                 sleep 1s
@@ -255,7 +255,7 @@ done
 while :
 do
 sleep 297s
-curl -Is "$MYWEBSITE" > /dev/null 2>&1
+curl -Is --insecure "$MYWEBSITE" > /dev/null 2>&1
 sleep 297s
     LISTS=$( awk '{print $3,$4}' /tmp/dhcp.leases | sed 's/*/*-MI4A/g' )
     CFGCOMBINED=$( tail -n +2 /tmp/hosts/dhcp.cfg* | sed 's/'"$NETWORKPREFIX"'//g' )
