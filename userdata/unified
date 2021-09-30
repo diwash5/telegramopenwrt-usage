@@ -1,0 +1,277 @@
+#!/bin/bash
+sleep 10s
+BOTTOKEN=$( uci get telegram.script.bottoken )
+CHANNEL1=$( uci get telegram.script.channel1 )
+CHANNEL2=$( uci get telegram.script.channel2 )
+CHANNELNOTIFY=$( uci get telegram.script.channelnotify )
+WANIP=$( uci get telegram.script.wanip )
+ROUTERIP=$( uci get network.lan.ipaddr )
+NETWORKPREFIX=$( uci get telegram.script.networkprefix )
+BOARDID=$( uci get telegram.script.boardid )
+TESTURL="curl -Is http://www.google.com --connect-timeout 25"
+WRIS=$( uci get telegram.script.isac )
+OFFSET=$( cat /etc/userdata/offsetvalue )
+MYWEBSITE=$( uci get telegram.script.website )
+MYWEBSITEAPI=$( uci get telegram.script.websiteapi )
+STIMER="1m"
+COUNTING=1
+
+send_data() {
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d '{"chat_id": "'$2'", "text": "```\n'"$1"'\n```", "disable_notification": true,  "parse_mode":"markdown"}' \
+    https://api.telegram.org/bot"$BOTTOKEN"/sendMessage > /dev/null 2>&1
+}
+
+send_speed_data(){
+i=0
+GROUPED=""
+    DATASA=$( awk -F " " 'FNR==NR {
+    array[$1]=$2; next
+    }
+    { for (i in array) gsub("\\<"i"\\>", array[i])
+    }1' /tmp/dhcplist /tmp/database )
+DATAS="$DATASA
+"
+LINECOUNT=$(printf "%s" "$DATAS" | wc -l )
+((LINECOUNT--))
+printf "%s" "$DATAS" | while read line
+      do
+      INDIVIDUALDATA=$( echo $line | awk  '{print "{ \"user\":\""$1"\",\n","\"macaddress\":\""$2"\",","\"download\":\""$3"\",","\"upload\":\""$4"\",","\"totaldownload\":\""$5"\",","\"totalupload\":\""$6"\",","\"total\":\""$7"\" }"}' )
+        if [ "$i" -ne "$LINECOUNT" ]
+        then
+                GROUPED+="$INDIVIDUALDATA,"
+        fi
+        if [ "$i" -eq "$LINECOUNT" ]
+        then
+                GROUPED+="$INDIVIDUALDATA "
+                DATATOSEND=$( printf "%s" " { \"date\" : \"$( date +'%F %H:%M' )\" , \"data\" : [ "$GROUPED" ] } " )
+                curl -s --location --request POST "$MYWEBSITEAPI" \
+                --header 'Content-Type: application/json' \
+                --data-raw "$DATATOSEND" > /dev/null 2>&1
+                sleep 1s
+        fi
+((i++))
+done
+}
+
+send_speed(){
+    sed 's/192.168.//g;/*/d' /tmp/dhcplist | awk '{for(i=1;i<=NF; i++) {$i=substr($i,1,8) } OFS=" "; print $0}' > /tmp/dhcplists
+    awk 'BEGIN{printf( "User " " Down/s" " Up/s" " Total" "\n" "-------- " "------ " "------ " " ------" );
+        printf("\n")} {print $1,$3,$4,$7;sum+=$3;sum1+=$4;sum2+=$7 }
+        END{print "-------- " "------ " "------ " " ------" "\n" "Total",sum,sum1,sum2}' /tmp/database |
+    sed 's/192.168.//g' |
+    numfmt --from=auto --to=iec --suffix=B --padding=-3 --field=2,3 --header=2 --invalid='ignore' |
+    numfmt --from=auto --to=iec --suffix=B --padding=-3 --format %0.1f --field=4 --header=2 --invalid='ignore' > /tmp/currentspeed
+    SPEED=$(awk -F " " 'FNR==NR {
+        array[$1]=$2; next
+        }
+        { for (i in array) gsub("\\<"i"\\>", array[i])
+        }1' /tmp/dhcplists /tmp/currentspeed | awk '{printf("%8s\t|%6s\t|%6s\t|%7s", $1,$2,$3,$4); printf("\n")}' )
+            if [[ "$( echo "$SPEED" | wc -l )" -gt 4 ]]; then
+                send_data "$SPEED" "$1"
+                if [[ "$2" -eq 1 ]]; then
+                rm /tmp/usage.db
+                fi
+            else
+                send_data "No Useful Data, skipping" "$1"
+            fi
+}
+
+send_usage() {
+    nlbw -c csv -g ip | tail -n +2 |
+    sed '/'"$WANIP"'/d;
+    /\b'"$ROUTERIP"'\b/d;
+    /\b0\b/d;
+    s/"//g' |
+    awk 'BEGIN{print "User " "Download " "Upload" "\n" "-------- " "------ " "------" }
+    {print $1,$3,$5;sum+=$3;sum1+=$5} END{print "-------- " "------ " "------" "\n" "Total ",sum, sum1}' |
+    numfmt --from=auto --to=iec --suffix=B --padding=-3 --format %0.1f --field=2,3 --header=2 --invalid='ignore' > /tmp/currentusage
+    USAGE=$(awk -F " " 'FNR==NR {
+    array[$1]=$2; next
+    }
+    { for (i in array) gsub("\\<"i"\\>", array[i])
+    }1' /tmp/dhcplists /tmp/currentusage |
+    sed 's/192.168.//g' |
+    awk '{printf("%9s\t|%8s\t|%8s\t", $1,$2,$3); printf("\n")}')
+    UPTIMES="Time: $( uptime | cut -d ',' -f 1 )
+Connected Users: $( tail -n +2 /proc/net/arp | sed '/'"$NETWORKPREFIX"'/d' | wc -l )
+-----------------------------
+"
+    HRSUSAGE="$UPTIMES$USAGE"
+    send_data "$HRSUSAGE" "$1"
+}
+
+MESSAGE="Just now"
+while :
+do
+    if [ -z "$($TESTURL)" ]
+    then
+    NETCOUNT=$((NETCOUNT+1))
+    MESSAGE="$NETCOUNT Minutes ago "
+    sleep 60s
+    else
+    break
+    fi
+done
+BOOTTEXT="$BOARDID Started $MESSAGE "
+send_data "$BOOTTEXT" "$CHANNELNOTIFY"
+(
+logread -f | while read line
+do
+    case "$line" in
+        *"DHCPACK"* )
+                SENDME=$(echo "$line" | awk '{print "   Connected - '"$BOARDID"' \n" "Name: "$11,"\nIP address: "$9,"\nMac address: "$10 }')
+                send_data "$SENDME" "$CHANNELNOTIFY" ;;
+        *"deauthenticated"* )
+                MACADDRESS=$(echo "$line" | awk '{print $10}')
+                    GETNAME=$( < /tmp/dhcp.leases grep "$MACADDRESS"  | awk '{print "      Disconnected \n" "Name :"$4,"\nIP address:"$3,"\nMACADDRESS :"$2}')
+                    send_data "$GETNAME" "$CHANNELNOTIFY" ;;
+    esac
+done
+)&
+(
+while :
+do
+UPDATES=$( curl -s https://api.telegram.org/bot"$BOTTOKEN"/getUpdates?offset="$OFFSET"\&timeout=15 ) > /dev/null 2>&1
+if [[ "${#UPDATES}" -gt 60 ]]; then
+        CIDS=$( jsonfilter -s "$UPDATES" -e "$.result[*].update_id" )
+        for CID in $CIDS
+        do
+                COMNDS=$( jsonfilter -s "$UPDATES" -e "$.result[@.update_id=$CID].channel_post.entities[*].type" )
+                OFFSET=$((OFFSET+1))
+                echo "$OFFSET" > /etc/userdata/offsetvalue
+                if [ "$COMNDS" = "bot_command"  ];then
+            CTEXT=$( jsonfilter -s "$UPDATES" -e "$.result[@.update_id=$CID].channel_post.text" )
+            if [[ "$WRIS" -eq 1 ]]; then
+                                if  [[ "$CTEXT" == *"MI4C"* ]];then
+                                                FORISAC=1
+                                                CTEXTS="${CTEXT// MI4C/}"
+                                        else
+                                                FORISAC=0
+                                fi
+                        elif [[ "$WRIS" -eq 0 ]];then
+                                if [[  "$CTEXT" == *"MI4C"* ]]; then
+                        FORISAC=1
+                    else
+                        FORISAC=0
+                        CTEXTS=$CTEXT
+                fi
+
+                        fi
+                        if [[ "$FORISAC" -eq "$WRIS" ]];then
+                        EXUTEME=1
+                        else
+                        EXUTEME=0
+                        fi
+                        if [ "$EXUTEME" = "1" ]; then
+                STIMES=1
+                                case "$CTEXTS" in
+                    "/help" )
+                        send_data "List of available commands:
+/start - start interactive mode
+/reboot - reboots the router
+/uptime - shows uptime and load average
+/cmd - Execute anything, Do not exute continuous commands like top
+/client - Gets the client list from ARP
+/dhcpleases - Shows dhcp leases
+/wifidetails - Shows connected clients
+/help - lists this help menu
+/done - stops interactive mode " "$CHANNELNOTIFY" ;;
+                                        "/reboot" )
+                                                send_data "Rebooting" "$CHANNELNOTIFY"
+                                                reboot ;;
+                                        "/cmd "* )
+                                                CMDPREP=$( echo "$CTEXTS" | cut -c6- )
+                                                EXECOUTPUT=$($CMDPREP)
+                                                send_data "$EXECOUTPUT" "$CHANNELNOTIFY" ;;
+                                        "/client" )
+                                                DATA=$( tail -n +2 /proc/net/arp | sed '/'"$WANIP"'/d ; s/192.168.//g' |                         awk 'BEGIN{print "   IP  |" "       Mac   " "\n" "-------+" "-----------------" } {printf ("%6s\t|%15s\t", $1,$4);printf ("\n")}' )
+                                                send_data "$DATA" "$CHANNELNOTIFY" ;;
+                    "/start" )
+                        send_data "Interactive Mode enabled. Dont Forget to disable it after you're done" "$CHANNELNOTIFY"
+                                            STIMER="5s" ;;
+                    "/done" )
+                        send_data "Interactive Mode Disabled " "$CHANNELNOTIFY"
+                        STIMER="1m"
+                        STIMES=1 ;;
+                    "/uptime" )
+                        EXECOUTPUT=$(uptime)
+                        send_data "$EXECOUTPUT" "$CHANNELNOTIFY" ;;
+                    "/dhcpleases" )
+                        EXECOUTPUT=$( sed 's/192.168.//g' /tmp/dhcp.leases | awk '{print $3 " |", $4 " |" ,$2 }' )
+                        send_data "$EXECOUTPUT" "$CHANNELNOTIFY" ;;
+                    "/wifidetails" )
+                        INTERFACES=$( iw dev | grep Interface | cut -f 2 -s -d" " )
+                        for INTERFACE in $INTERFACES
+                        do
+                            CLIENTLIST=$( iw dev "$INTERFACE" station dump | grep 'Station\|inactive\|signal avg:\|connected time\|expected throughput\|signal\|rx bytes\|tx bytes' )
+                                if [[ ${#CLIENTLIST} -gt 10 ]]; then
+                            INTERFACESPACE="Clients on $INTERFACE
+
+"
+                                MACADDRESES=$( iw dev "$INTERFACE" station dump | grep "Station" | cut -f 2 -d " " )
+                                                LISTMODIFY=$CLIENTLIST
+                                for MACADDRES in $MACADDRESES
+                                do
+                                    CONMACNAME=$( < /tmp/dhcp.leases grep "$MACADDRES" | cut -f 4  -d" " )
+                                                    LISTMODIFY="${LISTMODIFY//Station "$MACADDRES" (on "$INTERFACE")/Device: "$CONMACNAME"}"
+                                done
+                                DOWNTOTAL=$( echo "$LISTMODIFY" | grep 'rx bytes:\|tx bytes:' | cut -f 3  )
+                                for DOWNLOAD in $DOWNTOTAL
+                                do
+                                    CONVERSION=$( echo "$DOWNLOAD" | numfmt --from=auto --to=iec )
+                                    LISTMODIFY="${LISTMODIFY//$DOWNLOAD/$CONVERSION}"
+                                done
+                                LISTMODIFY=${LISTMODIFY//       inactive time:  /  Last active: }
+                                LISTMODIFY=${LISTMODIFY//       rx bytes:       /  Upload: }
+                                LISTMODIFY=${LISTMODIFY//       tx bytes:       /  Download: }
+                                LISTMODIFY=${LISTMODIFY//       signal:         /  signal: }
+                                LISTMODIFY=${LISTMODIFY//       signal avg:     /  signal avg: }
+                                LISTMODIFY=${LISTMODIFY//       expected throughput:    /  Expected Speed: }
+                                LISTMODIFY=${LISTMODIFY//       connected time: /  Connected time: }
+                                RESULT="$INTERFACESPACE$LISTMODIFY"
+                                send_data "$RESULT" "$CHANNELNOTIFY"
+                                else
+                                send_data "No clients on $INTERFACE " "$CHANNELNOTIFY"
+                                fi
+                        done ;;
+                                esac
+                        fi
+                fi
+        done
+fi
+if [ "$STIMER" = "5s" ]; then
+    STIMES=$(( STIMES + 1 ))
+fi
+if [[ $STIMES -gt 12 ]];then
+        send_data "Inactivity Detected, Turning off Interactive Mode" "$CHANNELNOTIFY"
+        STIMES=1
+        STIMER="1m"
+fi
+sleep "$STIMER"
+done
+)&
+
+while :
+do
+sleep 297s
+curl -Is "$MYWEBSITE" > /dev/null 2>&1
+sleep 297s
+    LISTS=$( awk '{print $3,$4}' /tmp/dhcp.leases | sed 's/*/*-MI4A/g' )
+    CFGCOMBINED=$( tail -n +2 /tmp/hosts/dhcp.cfg* | sed 's/'"$NETWORKPREFIX"'//g' )
+    printf "%s" "$LISTS
+$CFGCOMBINED" > /tmp/dhcplist
+    SPEEDATA=$( awk -F "," 'NR >= 2 {print $2,$1,$4,$5,$6,$7,$8}' /tmp/usage.db | sed '/NA/d'  )
+    printf "%s" "$SPEEDATA" > /tmp/database
+    send_speed_data
+    sleep 1s
+    send_speed  "$CHANNEL1" "1"
+    if [ $(( COUNTING % 3 )) =  0 ]; then
+        sleep 1s
+        send_usage "$CHANNEL1"
+    fi
+    COUNTING=$((COUNTING+1))
+    if [ "$COUNTING" = 145 ];then
+        COUNTING=1
+    fi
+done
