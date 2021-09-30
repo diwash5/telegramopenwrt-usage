@@ -1,0 +1,12 @@
+
+config telegram 'script'
+        option bottoken 'Bot:Token'
+        option networkprefix '.lan'
+        option wanip '192.168.1.'
+        option boardid 'Mi 4A Gigabit' # write something i guess
+        option isac '0'             # put 1 if it is a secondary router 
+        option channel1 'channel1'
+        option channel2 'channel2'
+        option channelnotify 'botchannel'
+        option website 'https://webpage.username.repl.co/'
+        option websiteapi 'https://webpage.username.repl.co/speed'
