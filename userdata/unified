@@ -193,7 +193,8 @@ if [[ "${#UPDATES}" -gt 60 ]]; then
                                                 EXECOUTPUT=$($CMDPREP)
                                                 send_data "$EXECOUTPUT" "$CHANNELNOTIFY" ;;
                                         "/client" )
-                                                DATA=$( tail -n +2 /proc/net/arp | sed '/'"$WANIP"'/d ; s/192.168.//g' |                         awk 'BEGIN{print "   IP  |" "       Mac   " "\n" "-------+" "-----------------" } {printf ("%6s\t|%15s\t", $1,$4);printf ("\n")}' )
+                                                DATA=$( tail -n +2 /proc/net/arp | sed '/'"$WANIP"'/d ; s/192.168.//g' |
+                         awk 'BEGIN{print "   IP  |" "       Mac   " "\n" "-------+" "-----------------" } {printf ("%6s\t|%15s\t", $1,$4);printf ("\n")}' )
                                                 send_data "$DATA" "$CHANNELNOTIFY" ;;
                     "/start" )
                         send_data "Interactive Mode enabled. Dont Forget to disable it after you're done" "$CHANNELNOTIFY"
@@ -265,6 +266,8 @@ do
 sleep 145s
 curl -Is --insecure "$MYWEBSITE" > /dev/null 2>&1
 sleep 145s
+if [[ -n "$($TESTURL)" ]]
+then
     if [ $(( COUNTING % 3 )) =  0 ]; then
     LISTS=$( awk '{print $3,$4}' /tmp/dhcp.leases | sed 's/*/*-MI4A/g' )
     CFGCOMBINED=$( tail -n +2 /tmp/hosts/dhcp.cfg* | sed 's/'"$NETWORKPREFIX"'//g' )
@@ -284,6 +287,7 @@ $CFGCOMBINED" > /tmp/dhcplist
     if [ "$COUNTING" = 145 ];then
         COUNTING=1
     fi
+fi
 sleep 145s
 curl -Is --insecure "$MYWEBSITE" > /dev/null 2>&1
 sleep 145s
