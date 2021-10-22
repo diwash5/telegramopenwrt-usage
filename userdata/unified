@@ -23,6 +23,9 @@ send_data() {
 }
 
 send_speed_data(){
+TOTALLINECOUNT=$( cat /tmp/database | wc -l )
+if [[ "$TOTALLINECOUNT" -gt 1 ]];
+then
 i=0
 GROUPED=""
     DATASA=$( awk -F " " 'FNR==NR {
@@ -44,7 +47,7 @@ printf "%s" "$DATAS" | while read line
         if [ "$i" -eq "$LINECOUNT" ]
         then
                 GROUPED+="$INDIVIDUALDATA "
-                DATATOSEND=$( printf "%s" " { \"date\" : \"$( date +'%F %H:%M' )\" , \"source\": \"MI-4C\"  , \"data\" : [ "$GROUPED" ] } " )
+                DATATOSEND=$( printf "%s" " { \"date\" : \"$( date +'%F %H:%M' )\" , \"source\": \"MI-4A\"  , \"data\" : [ "$GROUPED" ] } " )
                 curl -s --insecure --location --request POST "$MYWEBSITEAPI" \
                 --header 'Content-Type: application/json' \
                 --data-raw "$DATATOSEND" > /dev/null 2>&1
@@ -52,6 +55,9 @@ printf "%s" "$DATAS" | while read line
         fi
 ((i++))
 done
+else
+echo "SKIPPED"
+fi
 }
 
 send_speed(){
@@ -71,6 +77,7 @@ send_speed(){
                 send_data "$SPEED" "$1"
                 if [[ "$2" -eq 1 ]]; then
                 rm /tmp/usage.db
+                #echo "File Deleted"
                 fi
             else
                 send_data "No Useful Data, skipping" "$1"
@@ -129,6 +136,7 @@ do
     esac
 done
 )&
+
 (
 while :
 do
@@ -185,8 +193,7 @@ if [[ "${#UPDATES}" -gt 60 ]]; then
                                                 EXECOUTPUT=$($CMDPREP)
                                                 send_data "$EXECOUTPUT" "$CHANNELNOTIFY" ;;
                                         "/client" )
-                                                DATA=$( tail -n +2 /proc/net/arp | sed '/'"$WANIP"'/d ; s/192.168.//g' |
-                         awk 'BEGIN{print "   IP  |" "       Mac   " "\n" "-------+" "-----------------" } {printf ("%6s\t|%15s\t", $1,$4);printf ("\n")}' )
+                                                DATA=$( tail -n +2 /proc/net/arp | sed '/'"$WANIP"'/d ; s/192.168.//g' |                         awk 'BEGIN{print "   IP  |" "       Mac   " "\n" "-------+" "-----------------" } {printf ("%6s\t|%15s\t", $1,$4);printf ("\n")}' )
                                                 send_data "$DATA" "$CHANNELNOTIFY" ;;
                     "/start" )
                         send_data "Interactive Mode enabled. Dont Forget to disable it after you're done" "$CHANNELNOTIFY"
@@ -255,24 +262,29 @@ done
 
 while :
 do
-sleep 297s
+sleep 145s
 curl -Is --insecure "$MYWEBSITE" > /dev/null 2>&1
-sleep 297s
-    LISTS=$( awk '{print $3,$4}' /tmp/dhcp.leases | sed 's/*/*-MI4C/g' )
+sleep 145s
+    if [ $(( COUNTING % 3 )) =  0 ]; then
+    LISTS=$( awk '{print $3,$4}' /tmp/dhcp.leases | sed 's/*/*-MI4A/g' )
     CFGCOMBINED=$( tail -n +2 /tmp/hosts/dhcp.cfg* | sed 's/'"$NETWORKPREFIX"'//g' )
     printf "%s" "$LISTS
 $CFGCOMBINED" > /tmp/dhcplist
     SPEEDATA=$( awk -F "," 'NR >= 2 {print $2,$1,$4,$5,$6,$7,$8}' /tmp/usage.db | sed '/NA/d'  )
     printf "%s" "$SPEEDATA" > /tmp/database
-    send_speed_data
     sleep 1s
     send_speed  "$CHANNEL1" "1"
-    if [ $(( COUNTING % 3 )) =  0 ]; then
+        send_speed_data
         sleep 1s
-        send_usage "$CHANNEL1"
+        if [ $(( COUNTING % 6 )) = 0 ];then
+                send_usage "$CHANNEL1"
+        fi
     fi
     COUNTING=$((COUNTING+1))
     if [ "$COUNTING" = 145 ];then
         COUNTING=1
     fi
+sleep 145s
+curl -Is --insecure "$MYWEBSITE" > /dev/null 2>&1
+sleep 145s
 done
