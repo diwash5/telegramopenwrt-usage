@@ -23,7 +23,7 @@ send_data() {
 }
 
 send_speed_data(){
-TOTALLINECOUNT=$( cat /tmp/database | wc -l )
+TOTALLINECOUNT=$( cat /tmp/usage.db | wc -l )
 if [[ "$TOTALLINECOUNT" -gt 1 ]];
 then
 i=0
